@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Copyright (c) 2016 Mick Ayzenberg - Security Innovation
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -81,14 +82,708 @@ import random
 import string
 
 
-AUTHMATRIX_VERSION = "0.8.2"
+AUTHMATRIX_VERSION = "0.9"
 
 
 class BurpExtender(IBurpExtender, ITab, IMessageEditorController, IContextMenuFactory):
     
-    #
+    ##
+    ## implement ITab
+    ##    
+
+    
+    def getTabCaption(self):
+        return "AuthMatrix"
+    
+    def getUiComponent(self):
+        return self._splitpane
+       
+    def highlightTab(self):
+        currentPane = self._splitpane
+        previousPane = currentPane
+        while currentPane and not isinstance(currentPane, JTabbedPane):
+            previousPane = currentPane
+            currentPane = currentPane.getParent()
+        if currentPane:
+            index = currentPane.indexOfComponent(previousPane)
+            # TODO use old background instead of black (currently doesnt work)
+            #oldBackground = currentPane.getBackgroundAt(index)
+            currentPane.setBackgroundAt(index,self._db.BURP_ORANGE)
+
+            class setColorBackActionListener(ActionListener):
+                def actionPerformed(self, e):
+                    currentPane.setBackgroundAt(index,Color.BLACK)
+                
+            timer = Timer(5000, setColorBackActionListener())
+            timer.setRepeats(False)
+            timer.start()
+
+
+
+    ##
+    ## Creates the sendto tab in other areas of Burp
+    ##
+
+    def createMenuItems(self, invocation):
+
+        
+
+
+        def addRequestsToTab(e):
+            if messages:
+                messageInfo = messages[0]
+                requestInfo = self._helpers.analyzeRequest(messageInfo)
+                name = str(requestInfo.getMethod()).ljust(8) + requestInfo.getUrl().getPath()
+                # Grab regex from response
+                regex = "^HTTP/1\.1 200 OK"
+                response = messageInfo.getResponse()
+                if response:
+                    responseInfo=self._helpers.analyzeResponse(response)
+                    if len(responseInfo.getHeaders()):
+                        responseCodeHeader = responseInfo.getHeaders()[0]
+                        regex = "^"+re.escape(responseCodeHeader)
+                # Must create a new RequestResponseStored object since modifying the original messageInfo
+                # from its source (such as Repeater) changes this saved object. MessageInfo is a reference, not a copy
+                messageIndex = self._db.createNewMessage(RequestResponseStored(self,requestResponse=messageInfo), name, regex)
+            self._messageTable.redrawTable()
+            self._chainTable.redrawTable()
+            self.highlightTab()
+
+
+        class UserCookiesActionListener(ActionListener):
+            def __init__(self, currentUser, extender):
+                self.currentUser=currentUser
+                self.extender = extender
+
+            def actionPerformed(self, e):
+                for messageInfo in messages:
+                    cookieVal = ""
+                    requestInfo = self.extender._helpers.analyzeRequest(messageInfo)
+                    for header in requestInfo.getHeaders():
+                        cookieStr = "Cookie: "
+                        if header.startswith(cookieStr):
+                            cookieVal = header[len(cookieStr):]
+
+                    # Grab Set-Cookie headers from the responses as well
+                    response = messageInfo.getResponse()
+                    if response:
+                        responseInfo = self.extender._helpers.analyzeResponse(response)
+                        responseCookies = responseInfo.getCookies()
+                        newCookies = "; ".join([x.getName()+"="+x.getValue() for x in responseCookies])
+                        cookieVal = ModifyMessage.cookieReplace(cookieVal,newCookies)
+
+                    self.currentUser._cookies = cookieVal
+
+                self.extender._userTable.redrawTable()
+                self.extender.highlightTab()
+
+        ret = []
+        messages = invocation.getSelectedMessages()
+
+        # Check if the messages in the target site map tree have a response
+        valid = True
+        if invocation.getInvocationContext() == invocation.CONTEXT_TARGET_SITE_MAP_TREE:
+            for selected in messages:
+                if not selected.getResponse():
+                    valid = False
+
+# เพิ่มตัวตรวจสอบสถานะเพื่อป้องกันการส่งหลายคำขอ
+        self.isRequestSent = False
+
+        if valid:
+            menuItem = JMenuItem("Send request(s) to AuthMatrix")
+            
+            def singleRequestAction(event):
+                if not self.isRequestSent:  # ตรวจสอบว่าคำขอยังไม่ถูกส่ง
+                    addRequestsToTab(event)  # เรียกฟังก์ชันส่งคำขอ
+                    self.isRequestSent = True  # ตั้งค่าเป็น True เพื่อป้องกันการส่งซ้ำ
+
+            menuItem.addActionListener(singleRequestAction)
+            ret.append(menuItem)
+
+            if len(messages) == 1:
+                # Send cookies to user
+                for user in self._db.getUsersInOrderByRow():
+                    menuItem = JMenuItem("Send cookies to AuthMatrix user: " + user._name)
+
+                    def sendCookiesAction(event, user=user):
+                        if not self.isRequestSent:  # ใช้ตัวตรวจสอบสถานะร่วมกัน
+                            UserCookiesActionListener(user, self).actionPerformed(event)
+                            self.isRequestSent = True  # ป้องกันการส่งซ้ำ
+
+                    menuItem.addActionListener(sendCookiesAction)
+                    ret.append(menuItem)
+
+        return ret
+    
+    ##
+    ## implement IMessageEditorController
+    ## this allows our request/response viewers to obtain details about the messages being displayed
+    ##
+
+    def getHttpService(self):
+        return self._currentlyDisplayedItem.getHttpService()
+
+    def getRequest(self):
+        return self._currentlyDisplayedItem.getRequest()
+
+    def getResponse(self):
+        return self._currentlyDisplayedItem.getResponse()
+
+    ##
+    ## Actions on Bottom Row Button Clicks
+    ##
+
+    def getInputUserClick(self, e):
+        newUser = JOptionPane.showInputDialog(self._splitpane,"Enter New User:")
+        if newUser:
+            self._db.getOrCreateUser(newUser)
+            self._userTable.redrawTable()
+            # redraw Message Table since it adds a new SingleUser Role
+            self._messageTable.redrawTable()
+            self._chainTable.redrawTable()
+
+    def getInputRoleClick(self, e):
+        newRole = JOptionPane.showInputDialog(self._splitpane,"Enter New Role:")
+        if newRole:
+            self._db.getOrCreateRole(newRole)
+            self._userTable.redrawTable()
+            self._messageTable.redrawTable()
+
+    def newChainClick(self,e):
+        self._db.createNewChain()
+        self._chainTable.redrawTable()
+
+    def newHeaderClick(self, e):
+        self._db.addNewHeader()
+        self._userTable.redrawTable()
+
+    def newStaticValueClick(self, e):
+        newSV = JOptionPane.showInputDialog(self._splitpane,"Enter a label for the new Chain Source:")
+        if newSV:
+            self._db.addNewSV(newSV)
+            self._userTable.redrawTable()
+            self._chainTable.redrawTable()
+
+    def cancelClick(self,e):
+        self._runCancelled = True
+        self._cancelButton.setEnabled(False)
+
+    def saveClick(self, e):
+        # Update original requests with any user changes
+        self._messageTable.updateMessages()
+
+        returnVal = self._fc.showSaveDialog(self._splitpane)
+        if returnVal == JFileChooser.APPROVE_OPTION:
+            f = self._fc.getSelectedFile()
+            if f.exists():
+                result = JOptionPane.showConfirmDialog(self._splitpane, "The file exists, overwrite?", "Existing File", JOptionPane.YES_NO_OPTION)
+                if result != JOptionPane.YES_OPTION:
+                    return
+            fileName = f.getPath()
+            # TODO Potential bug here.  Check if the value being written is 0 before opening
+            # TODO add a try catch here?
+            jsonValue = self._db.getSaveableJson()
+            if jsonValue:
+                fileout = open(fileName,'w')
+                fileout.write(jsonValue)
+                fileout.close()
+            else:
+                # TODO popup errors instead of prints
+                print "Error: Save Failed. JSON empty."
+            # TODO currently this will save the config to burp, but not to a specific project
+            # Will also need an export and loadFromFile feature if this is ever implemented
+            # self._callbacks.saveExtensionSetting("AUTHMATRIX", self._db.getSaveableJson())
+
+    def loadClick(self,e):
+        returnVal = self._fc.showOpenDialog(self._splitpane)
+        if returnVal == JFileChooser.APPROVE_OPTION:
+            f = self._fc.getSelectedFile()
+            fileName = f.getPath()
+            
+            filein = open(fileName,'r')
+            jsonText = filein.read()
+            filein.close()
+            # Check if using on older state file compatible with v0.5.2 or greater
+            if not jsonText or jsonText[0] !="{":
+                warning = """
+                CAUTION: 
+    
+                Loading a saved configuration prior to v0.6.3 deserializes data into Jython objects. 
+                This action may pose a security threat to the application.
+                Only proceed when the source and contents of this file is trusted. 
+    
+                Load Selected File?
+                """
+                result = JOptionPane.showOptionDialog(self._splitpane, 
+                    warning, "Caution", 
+                    JOptionPane.YES_NO_OPTION, 
+                    JOptionPane.WARNING_MESSAGE, 
+                    None, 
+                    ["OK", "Cancel"],
+                    "OK")
+
+                if result != JOptionPane.YES_OPTION:
+                    return
+                self._db.loadLegacy(fileName,self)
+            else:
+                self._db.loadJson(jsonText,self)
+                # TODO currently can load exention settings, but this is saved for Burp and not for the Project specifically
+                # self._db.loadJson(self._callbacks.loadExtensionSetting("AUTHMATRIX"),self)
+
+            self._userTable.redrawTable()
+            self._messageTable.redrawTable()
+            self._chainTable.redrawTable()
+
+    def clearClick(self,e):
+        result = JOptionPane.showConfirmDialog(self._splitpane, "Clear AuthMatrix Configuration?", "Clear Config", JOptionPane.YES_NO_OPTION)
+        if result == JOptionPane.YES_OPTION:
+            self._db.clear()
+            self._tabs.removeAll()
+            self._userTable.redrawTable()
+            self._messageTable.redrawTable()
+            self._chainTable.redrawTable()
+
+    def clearAuthAndReimportClick(self, e):
+        try:
+            # Step 1: Get the current data as JSON
+            jsonString = self._db.getSaveableJson()
+            if not jsonString:
+                print "Error: Nothing to save."
+                return
+
+            # Step 2: Modify the JSON data
+            stateDict = json.loads(jsonString)
+            
+            if "arrayOfMessages" in stateDict:
+                for messageEntry in stateDict["arrayOfMessages"]:
+                    if "requestBase64" in messageEntry and messageEntry["requestBase64"]:
+                        # Decode the request
+                        requestBytes = base64.b64decode(messageEntry["requestBase64"])
+                        requestStr = self._helpers.bytesToString(requestBytes)
+
+                        # Analyze the request to separate headers and body
+                        requestInfo = self._helpers.analyzeRequest(requestBytes)
+                        headers = requestInfo.getHeaders()
+                        bodyBytes = requestBytes[requestInfo.getBodyOffset():]
+
+                        # Filter out Authorization and Cookie headers
+                        newHeaders = ArrayList()
+                        for header in headers:
+                            if not header.lower().startswith("authorization:") and not header.lower().startswith("cookie:"):
+                                newHeaders.add(header)
+
+                        # Build the new HTTP message
+                        newMessageBytes = self._helpers.buildHttpMessage(newHeaders, bodyBytes)
+                        
+                        # Re-encode to Base64
+                        messageEntry["requestBase64"] = base64.b64encode(newMessageBytes)
+
+            modifiedJsonString = json.dumps(stateDict)
+
+            # Step 3: Load the modified JSON data
+            self._db.loadJson(modifiedJsonString, self)
+
+            # Refresh UI
+            self._tabs.removeAll()
+            self._userTable.redrawTable()
+            self._messageTable.redrawTable()
+            self._chainTable.redrawTable()
+            
+            print "Authorization and Cookie headers cleared and data re-imported."
+
+        except Exception as ex:
+            print "Error during Clear Auth & Re-import:"
+            traceback.print_exc(file=self._callbacks.getStderr())
+
+
+    def runClick(self,e):
+        t = Thread(target=self.runMessagesThread)
+        self._tabs.removeAll()
+        t.start()
+
+    def changeRegexPopup(self):
+        regexComboBox = JComboBox(self._db.arrayOfRegexes)
+        regexComboBox.setEditable(True)
+        failureModeCheckbox = JCheckBox()
+
+        panel = JPanel(GridBagLayout())
+        gbc = GridBagConstraints()
+        gbc.anchor = GridBagConstraints.WEST
+        firstline = JPanel()
+        firstline.add(JLabel("Select a Regex for all selected Requests:"))
+        secondline = JPanel()
+        secondline.add(regexComboBox)
+        thirdline = JPanel()
+        thirdline.add(failureModeCheckbox)
+        thirdline.add(JLabel("Regex Detects Unauthorized Requests (Failure Mode)"))
+
+
+        gbc.gridy = 0
+        panel.add(firstline,gbc)
+        gbc.gridy = 1
+        panel.add(secondline, gbc)
+        gbc.gridy = 2
+        panel.add(thirdline, gbc)
+
+
+        result = JOptionPane.showConfirmDialog(self._splitpane, panel, "Select Response Regex", JOptionPane.OK_CANCEL_OPTION)
+        value = regexComboBox.getSelectedItem() 
+        if result == JOptionPane.CANCEL_OPTION or not value:
+            return None, None
+        return value, failureModeCheckbox.isSelected()
+
+
+
+
+    def changeDomainPopup(self, service):
+        hostField = JTextField(25)
+        portField = JTextField(25)
+        checkbox = JCheckBox()
+
+        replaceHostCheckbox = JCheckBox()
+        replaceHostCheckbox.setSelected(True)
+        
+        errorField = JLabel("\n")
+        errorField.setForeground(Color.orange);
+        errorField.setFont
+
+        def isValidDomain(domain):
+            return re.match(r'^[a-zA-Z0-9-\.]+$', domain)
+
+        if service:
+            hostField.setText(service.getHost())
+            portField.setText(str(service.getPort()))
+            if service.getProtocol()=="https":
+                checkbox.setSelected(True)
+
+        class HttpsItemListener(ItemListener):
+            def itemStateChanged(self, e):
+                if e.getStateChange() == ItemEvent.SELECTED and portField.getText() == "80":                    
+                    portField.setText("443")
+                elif e.getStateChange() == ItemEvent.DESELECTED and portField.getText() == "443":
+                    portField.setText("80")
+        checkbox.addItemListener(HttpsItemListener())
+
+        class HostDocumentListener(DocumentListener):
+            def changeUpdate(self, e):
+                self.testHost()
+            def removeUpdate(self, e):
+                self.testHost()
+            def insertUpdate(self, e):
+                self.testHost()
+
+            def testHost(self):
+                domain = hostField.getText()
+                matches = isValidDomain(domain)
+                if not matches:
+                    # NOTE Hacky way to fix layout when host is long
+                    if len(domain)>40:
+                        domain = domain[:40]+"..."
+                    errorField.setText("Invalid host: "+domain)
+                else:
+                    errorField.setText("\n")
+        hostField.getDocument().addDocumentListener(HostDocumentListener())
+
+        domainPanel = JPanel(GridBagLayout())
+        gbc = GridBagConstraints()
+        gbc.anchor = GridBagConstraints.WEST
+
+        firstline = JPanel()
+        firstline.add(JLabel("Specify the details of the server to which the request will be sent."))
+        secondline = JPanel()
+        secondline.add(JLabel("Host: "))
+        secondline.add(hostField)
+        thirdline = JPanel()
+        thirdline.add(JLabel("Port: "))
+        thirdline.add(portField)
+        fourthline = JPanel()
+        fourthline.add(checkbox)
+        fourthline.add(JLabel("Use HTTPS"))
+        fifthline = JPanel()
+        fifthline.add(replaceHostCheckbox)
+        fifthline.add(JLabel("Replace Host in HTTP header"))
+        sixthline = JPanel()
+        sixthline.add(errorField)
+
+        gbc.gridy = 0
+        domainPanel.add(firstline,gbc)
+        gbc.gridy = 1
+        domainPanel.add(secondline, gbc)
+        gbc.gridy = 2
+        domainPanel.add(thirdline, gbc)
+        gbc.gridy = 3
+        domainPanel.add(fourthline, gbc)
+        gbc.gridy = 4
+        domainPanel.add(fifthline, gbc)
+        gbc.gridy = 5
+        domainPanel.add(sixthline, gbc)
+
+
+        result = JOptionPane.showConfirmDialog(
+            self._splitpane,domainPanel, "Configure target details", JOptionPane.OK_CANCEL_OPTION)
+        cancelled = (result == JOptionPane.CANCEL_OPTION)
+        if cancelled or not isValidDomain(hostField.getText()):
+            return (False, None, None, False, False)
+        return (True, hostField.getText(), portField.getText(), checkbox.isSelected(), replaceHostCheckbox.isSelected())
+
+    ##
+    ## Methods for running messages and analyzing results
+    ##
+
+    def lockButtons(self, running=True):
+        # Disable run button, enable cancel button
+        self._runButton.setEnabled(not running)
+        self._newUserButton.setEnabled(not running)
+        self._newRoleButton.setEnabled(not running)
+        self._newHeaderButton.setEnabled(not running)
+        self._newChainButton.setEnabled(not running)
+        self._newStaticValueButton.setEnabled(not running)
+        self._saveButton.setEnabled(not running)
+        self._loadButton.setEnabled(not running)
+        self._clearButton.setEnabled(not running)
+        self._clearAuthButton.setEnabled(not running)
+        self._cancelButton.setEnabled(running)
+
+
+    def runMessagesThread(self, messageIndexes=None):
+        self._db.lock.acquire()
+        try:
+            self.lockButtons()
+            self._runCancelled=False
+            # Update original requests with any user changes
+            self._messageTable.updateMessages()
+            self._db.clearAllChainResults()
+
+            indexes = messageIndexes
+            if not indexes:
+                indexes = self._db.getActiveMessageIndexes()
+            self.clearColorResults(indexes)
+            # Run in order of row, not by index
+            messagesThatHaveRun = []
+            for message in self._db.getMessagesInOrderByRow():
+                # Only run if message is in the selected indexes (NOTE: dependencies will be run even if not selected)
+                if message._index in indexes:
+                    messagesThatHaveRun = self.runMessageAndDependencies(message._index, messagesThatHaveRun, [])
+
+        except:
+            traceback.print_exc(file=self._callbacks.getStderr())
+        finally:
+            self.lockButtons(False)
+            self._db.lock.release()
+            self._messageTable.redrawTable()
+
+    def runMessageAndDependencies(self, messageIndex, messagesThatHaveRun, recursionCheckArray):
+        messageEntry = self._db.arrayOfMessages[messageIndex]
+        updatedMessagesThatHaveRun = messagesThatHaveRun[:]
+        updatedRecursionCheckArray = recursionCheckArray[:]
+
+        if messageIndex in updatedRecursionCheckArray:
+            print "Error: Recursion detected in message chains: "+"->".join([str(i) for i in updatedRecursionCheckArray])+"->"+str(messageIndex)
+
+        elif (messageIndex not in updatedMessagesThatHaveRun 
+            and messageEntry.isEnabled() 
+            and messageIndex in self._db.getActiveMessageIndexes()):
+                updatedRecursionCheckArray.append(messageIndex)
+                for chainIndex in self._db.getActiveChainIndexes():
+                    # Run any dependencies first
+                    chainEntry = self._db.arrayOfChains[chainIndex]
+                    if (messageIndex in chainEntry.getToIDRange() 
+                        and chainEntry.isEnabled() 
+                        and str(chainEntry._fromID).isdigit() 
+                        and int(chainEntry._fromID) >= 0):
+                            updatedMessagesThatHaveRun = self.runMessageAndDependencies(int(chainEntry._fromID), updatedMessagesThatHaveRun, updatedRecursionCheckArray)
+                self.runMessage(messageIndex)
+                # print messageIndex
+                updatedMessagesThatHaveRun.append(messageIndex)
+
+        return updatedMessagesThatHaveRun
+
+
+    def runMessage(self, messageIndex):
+
+        # NOTE: this uses hacky threading tricks for handling timeouts
+        tempRequestResponse = []
+        index = 0
+        def loadRequestResponse(index, service, message):
+            # NOTE: tempRequestResponse is an array because of a threading issue, 
+            # where if this thread times out, it will still update temprequestresponse later on..
+            try:
+                tempRequestResponse[index] = self._callbacks.makeHttpRequest(service,message)
+            except java.lang.RuntimeException:
+                # Catches if there is a bad host
+                # TODO there may sometimes be an unhandled exception thrown in the stack trace here?
+                print "Runtime Exception"
+                return
+            except:
+                traceback.print_exc(file=callbacks.getStderr())
+
+        messageEntry = self._db.arrayOfMessages[messageIndex]
+        messageEntry.clearResults()
+
+        messageInfo = messageEntry._requestResponse
+        requestInfo = self._helpers.analyzeRequest(messageInfo)
+        reqBody = messageInfo.getRequest()[requestInfo.getBodyOffset():]
+
+
+        for userIndex in [userEntry._index for userEntry in self._db.getUsersInOrderByRow()]:
+            # Handle cancel button early exit here
+            if self._runCancelled:
+                return
+
+            userEntry = self._db.arrayOfUsers[userIndex]
+            # Only run if the user is enabled
+            if userEntry.isEnabled():
+                newHeaders = ModifyMessage.getNewHeaders(requestInfo, userEntry._cookies, userEntry._headers)
+                newBody = reqBody
+    
+                # Replace with Chain
+                for toValue, chainIndex in userEntry.getChainResultByMessageIndex(messageIndex):
+                    # Add transformers
+                    chain = self._db.arrayOfChains[chainIndex]
+                    toValue = chain.transform(toValue, self._callbacks)
+                    toRegex = chain._toRegex
+                    newBody = StringUtil.toBytes(ModifyMessage.chainReplace(toRegex,toValue,[StringUtil.fromBytes(newBody)])[0])
+                    newHeaders = ModifyMessage.chainReplace(toRegex,toValue,newHeaders)
+    
+                # Replace with SV
+                # toValue = SV, toRegex = toRegex
+                for chain in [self._db.arrayOfChains[i] for i in self._db.getActiveChainIndexes()]:
+                    svName = chain.getSVName()
+                    # If the Chain Source exists, and this message is affected, and the chain is enabled
+                    if svName and messageIndex in chain.getToIDRange() and chain.isEnabled():
+                        # get toValue for correct source
+                        sourceUser = chain._sourceUser if chain._sourceUser>=0 else userIndex
+                        # Check that sourceUser is active
+                        if sourceUser in self._db.getActiveUserIndexes():
+                            toValue = self._db.getSVByName(svName).getValueForUserIndex(sourceUser)
+                            # Add transformers
+                            toValue = chain.transform(toValue, self._callbacks)
+                            toRegex = chain._toRegex
+                            newBody = StringUtil.toBytes(ModifyMessage.chainReplace(toRegex,toValue,[StringUtil.fromBytes(newBody)])[0])
+                            newHeaders = ModifyMessage.chainReplace(toRegex,toValue,newHeaders)
+    
+                # Replace Custom Special Types (i.e. Random)
+                newBody = StringUtil.toBytes(ModifyMessage.customReplace([StringUtil.fromBytes(newBody)])[0])
+                newHeaders = ModifyMessage.customReplace(newHeaders)
+    
+                # Construct and send a message with the new headers
+                message = self._helpers.buildHttpMessage(newHeaders, newBody)
+    
+    
+                # Run with threading to timeout correctly   
+                tempRequestResponse.append(None)         
+                t = Thread(target=loadRequestResponse, args = [index,messageInfo.getHttpService(),message])
+                t.start()
+                t.join(self._db.LOAD_TIMEOUT)
+    
+                # Create default requestResponse without response
+                requestResponse = RequestResponseStored(self, 
+                    request=message, 
+                    httpService=messageInfo.getHttpService())
+    
+                if t.isAlive():
+                    print "ERROR: Request Timeout for Request #"+str(messageIndex)+" and User #"+str(userIndex)
+                elif tempRequestResponse[index]:
+                    requestResponse = RequestResponseStored(self,requestResponse=tempRequestResponse[index])
+                
+                messageEntry.addRunByUserIndex(userIndex, requestResponse)
+    
+                # Get Chain Result
+                response = requestResponse.getResponse()
+                if not response:
+                    print "ERROR: No HTTP Response for Request #"+str(messageIndex)+" and User #"+str(userIndex)
+                else:
+                    response = StringUtil.fromBytes(response)
+                    for chain in [self._db.arrayOfChains[c] for c in self._db.getActiveChainIndexes()]:
+                        # This wont have issues with SV because of the prefix never matching the index
+                        if str(chain._fromID) == str(messageIndex) and chain.isEnabled():
+                            # If a sourceUser is set, replace for all users' chain results
+                            # Else, replace each user's chain results individually
+                            replace = True
+                            affectedUsers = [userEntry]
+                            if str(chain._sourceUser).isdigit() and chain._sourceUser >= 0: # TODO (0.9): why .isdigit()? Can this line just be removed
+                                if str(chain._sourceUser) == str(userIndex):
+                                    affectedUsers = self._db.getUsersInOrderByRow()
+                                else:
+                                    replace = False
+    
+                            if replace:
+                                result = ""
+                                if chain._fromRegex:
+                                    match = re.search(chain._fromRegex, response, re.DOTALL)
+                                    if match and len(match.groups()):
+                                        result = match.group(1)
+                                    
+                                for toID in chain.getToIDRange():
+                                    for affectedUser in affectedUsers:
+                                        affectedUser.addChainResultByMessageIndex(toID, result, chain._index)
+                index +=1
+
+        # Grab all active roleIndexes that are checkboxed
+        activeCheckBoxedRoles = [index for index in messageEntry._roles.keys() if messageEntry._roles[index] and not self._db.arrayOfRoles[index].isDeleted()]
+        # Check Role Results of message
+        for roleIndex in self._db.getActiveRoleIndexes():
+            expectedResult = self.checkResult(messageEntry, roleIndex, activeCheckBoxedRoles)
+            messageEntry.setRoleResultByRoleIndex(roleIndex, expectedResult)
+                    
+
+    def clearColorResults(self, messageIndexArray = None):
+        if not messageIndexArray:
+            messageIndexes = self._db.getActiveMessageIndexes()
+        else:
+            messageIndexes = messageIndexArray
+        for messageIndex in messageIndexes:
+            messageEntry = self._db.arrayOfMessages[messageIndex]
+            messageEntry.clearResults()
+        self._messageTable.redrawTable()
+
+    def checkResult(self, messageEntry, roleIndex, activeCheckBoxedRoles):
+        for userEntry in self._db.getUsersInOrderByRow():
+
+            ignoreUser = False
+
+            # NOTE: When using failure regex, all users not in a checked role must see that regex
+
+            # if user is not in this role, ignore it
+            if not userEntry._roles[roleIndex]:
+                ignoreUser = True
+            elif not userEntry.isEnabled():
+                ignoreUser = True
+            else:
+                # If user is in any other checked role, then ignore it
+                for index in self._db.getActiveRoleIndexes():
+                    if not index == roleIndex and userEntry._roles[index]:
+                        if index in activeCheckBoxedRoles:
+                            ignoreUser = True
+                    
+            if not ignoreUser:
+                if not userEntry._index in messageEntry._userRuns:
+                    print ("Unexpected Error: Results not found for Request #" 
+                        + str(messageEntry._index) + " and User #" + str(userEntry._index))
+                    return False
+                requestResponse = messageEntry._userRuns[userEntry._index]
+                response = requestResponse.getResponse()
+                if not response:
+                    # No Response: default to failed
+                    return False
+                
+                resp = StringUtil.fromBytes(response)
+                found = re.search(messageEntry._regex, resp, re.DOTALL)
+
+                roleChecked = roleIndex in activeCheckBoxedRoles
+                shouldSucceed = not roleChecked if messageEntry.isFailureRegex() else roleChecked 
+                succeeds = found if shouldSucceed else not found
+                
+                
+                if not succeeds:
+                    return False
+
+        return True
+
+    # 
     # implement IBurpExtender
-    #
+    #    
     
     def	registerExtenderCallbacks(self, callbacks):
     
@@ -163,7 +858,7 @@ class BurpExtender(IBurpExtender, ITab, IMessageEditorController, IContextMenuFa
                         else:
                             return
                     else:
-                        selfExtender._selectedRow = component.rowAtPoint(e.getPoint())
+                        selfelfExtender._selectedRow = component.rowAtPoint(e.getPoint())
                     popup.show(e.getComponent(), e.getX(), e.getY())
             component.addMouseListener(genericMouseListener())
 
@@ -392,7 +1087,6 @@ class BurpExtender(IBurpExtender, ITab, IMessageEditorController, IContextMenuFa
         messagePopup.add(messageRemove)
         
 
-
         messageHeaderPopup = JPopupMenu()
         addPopup(self._messageTable.getTableHeader(),messageHeaderPopup)
         roleRemoveFromMessageTable = JMenuItem("Remove Role")
@@ -455,6 +1149,7 @@ class BurpExtender(IBurpExtender, ITab, IMessageEditorController, IContextMenuFa
         self._saveButton = JButton("Save", actionPerformed=self.saveClick)
         self._loadButton = JButton("Load", actionPerformed=self.loadClick)
         self._clearButton = JButton("Clear", actionPerformed=self.clearClick)
+        self._clearAuthButton = JButton("Clear Auth & Re-import", actionPerformed=self.clearAuthAndReimportClick)
 
         buttons.add(self._runButton)
         buttons.add(self._cancelButton)
@@ -476,6 +1171,7 @@ class BurpExtender(IBurpExtender, ITab, IMessageEditorController, IContextMenuFa
         buttons.add(self._saveButton)
         buttons.add(self._loadButton)
         buttons.add(self._clearButton)
+        buttons.add(self._clearAuthButton)
 
         # Top pane
         firstPane = JSplitPane(JSplitPane.VERTICAL_SPLIT,roleScrollPane,messageScrollPane)
@@ -522,629 +1218,8 @@ class BurpExtender(IBurpExtender, ITab, IMessageEditorController, IContextMenuFa
 
         return
         
-    ##
-    ## implement ITab
-    ##
 
-    
-    def getTabCaption(self):
-        return "AuthMatrix"
-    
-    def getUiComponent(self):
-        return self._splitpane
-       
-    def highlightTab(self):
-        currentPane = self._splitpane
-        previousPane = currentPane
-        while currentPane and not isinstance(currentPane, JTabbedPane):
-            previousPane = currentPane
-            currentPane = currentPane.getParent()
-        if currentPane:
-            index = currentPane.indexOfComponent(previousPane)
-            # TODO use old background instead of black (currently doesnt work)
-            #oldBackground = currentPane.getBackgroundAt(index)
-            currentPane.setBackgroundAt(index,self._db.BURP_ORANGE)
 
-            class setColorBackActionListener(ActionListener):
-                def actionPerformed(self, e):
-                    currentPane.setBackgroundAt(index,Color.BLACK)
-                    
-            timer = Timer(5000, setColorBackActionListener())
-            timer.setRepeats(False)
-            timer.start()
-
-
-
-    ##
-    ## Creates the sendto tab in other areas of Burp
-    ##
-
-    def createMenuItems(self, invocation):
-
-        
-
-
-        def addRequestsToTab(e):
-            for messageInfo in messages:
-                requestInfo = self._helpers.analyzeRequest(messageInfo)
-                name = str(requestInfo.getMethod()).ljust(8) + requestInfo.getUrl().getPath()
-                # Grab regex from response
-                regex = "^HTTP/1\\.1 200 OK"
-                response = messageInfo.getResponse()
-                if response:
-                    responseInfo=self._helpers.analyzeResponse(response)
-                    if len(responseInfo.getHeaders()):
-                        responseCodeHeader = responseInfo.getHeaders()[0]
-                        regex = "^"+re.escape(responseCodeHeader)
-                # Must create a new RequestResponseStored object since modifying the original messageInfo
-                # from its source (such as Repeater) changes this saved object. MessageInfo is a reference, not a copy
-                messageIndex = self._db.createNewMessage(RequestResponseStored(self,requestResponse=messageInfo), name, regex)
-            self._messageTable.redrawTable()
-            self._chainTable.redrawTable()
-            self.highlightTab()
-
-
-        class UserCookiesActionListener(ActionListener):
-            def __init__(self, currentUser, extender):
-                self.currentUser=currentUser
-                self.extender = extender
-
-            def actionPerformed(self, e):
-                for messageInfo in messages:
-                    cookieVal = ""
-                    requestInfo = self.extender._helpers.analyzeRequest(messageInfo)
-                    for header in requestInfo.getHeaders():
-                        cookieStr = "Cookie: "
-                        if header.startswith(cookieStr):
-                            cookieVal = header[len(cookieStr):]
-
-                    # Grab Set-Cookie headers from the responses as well
-                    response = messageInfo.getResponse()
-                    if response:
-                        responseInfo = self.extender._helpers.analyzeResponse(response)
-                        responseCookies = responseInfo.getCookies()
-                        newCookies = "; ".join([x.getName()+"="+x.getValue() for x in responseCookies])
-                        cookieVal = ModifyMessage.cookieReplace(cookieVal,newCookies)
-
-                    self.currentUser._cookies = cookieVal
-
-                self.extender._userTable.redrawTable()
-                self.extender.highlightTab()
-
-        ret = []
-        messages = invocation.getSelectedMessages()
-
-        # Check if the messages in the target tree have a response
-        valid = True
-        if invocation.getInvocationContext() == invocation.CONTEXT_TARGET_SITE_MAP_TREE:
-            for selected in messages:
-                if not selected.getResponse():
-                    valid = False
-
-        if valid:
-            menuItem = JMenuItem("Send request(s) to AuthMatrix");
-            menuItem.addActionListener(addRequestsToTab)
-            ret.append(menuItem)
-
-            if len(messages)==1:
-                # Send cookies to user:
-                for user in self._db.getUsersInOrderByRow():
-                    menuItem = JMenuItem("Send cookies to AuthMatrix user: "+user._name);
-                    menuItem.addActionListener(UserCookiesActionListener(user, self))
-                    ret.append(menuItem)
-
-        return ret
-    
-    ##
-    ## implement IMessageEditorController
-    ## this allows our request/response viewers to obtain details about the messages being displayed
-    ##
-
-    def getHttpService(self):
-        return self._currentlyDisplayedItem.getHttpService()
-
-    def getRequest(self):
-        return self._currentlyDisplayedItem.getRequest()
-
-    def getResponse(self):
-        return self._currentlyDisplayedItem.getResponse()
-
-    ##
-    ## Actions on Bottom Row Button Clicks
-    ##
-
-    def getInputUserClick(self, e):
-        newUser = JOptionPane.showInputDialog(self._splitpane,"Enter New User:")
-        if newUser:
-            self._db.getOrCreateUser(newUser)
-            self._userTable.redrawTable()
-            # redraw Message Table since it adds a new SingleUser Role
-            self._messageTable.redrawTable()
-            self._chainTable.redrawTable()
-
-    def getInputRoleClick(self, e):
-        newRole = JOptionPane.showInputDialog(self._splitpane,"Enter New Role:")
-        if newRole:
-            self._db.getOrCreateRole(newRole)
-            self._userTable.redrawTable()
-            self._messageTable.redrawTable()
-
-    def newChainClick(self,e):
-        self._db.createNewChain()
-        self._chainTable.redrawTable()
-
-    def newHeaderClick(self, e):
-        self._db.addNewHeader()
-        self._userTable.redrawTable()
-
-    def newStaticValueClick(self, e):
-        newSV = JOptionPane.showInputDialog(self._splitpane,"Enter a label for the new Chain Source:")
-        if newSV:
-            self._db.addNewSV(newSV)
-            self._userTable.redrawTable()
-            self._chainTable.redrawTable()
-
-    def cancelClick(self,e):
-        self._runCancelled = True
-        self._cancelButton.setEnabled(False)
-
-    def saveClick(self, e):
-        # Update original requests with any user changes
-        self._messageTable.updateMessages()
-
-        returnVal = self._fc.showSaveDialog(self._splitpane)
-        if returnVal == JFileChooser.APPROVE_OPTION:
-            f = self._fc.getSelectedFile()
-            if f.exists():
-                result = JOptionPane.showConfirmDialog(self._splitpane, "The file exists, overwrite?", "Existing File", JOptionPane.YES_NO_OPTION)
-                if result != JOptionPane.YES_OPTION:
-                    return
-            fileName = f.getPath()
-            # TODO Potential bug here.  Check if the value being written is 0 before opening
-            # TODO add a try catch here?
-            jsonValue = self._db.getSaveableJson()
-            if jsonValue:
-                fileout = open(fileName,'w')
-                fileout.write(jsonValue)
-                fileout.close()
-            else:
-                # TODO popup errors instead of prints
-                print "Error: Save Failed. JSON empty."
-            # TODO currently this will save the config to burp, but not to a specific project
-            # Will also need an export and loadFromFile feature if this is ever implemented
-            # self._callbacks.saveExtensionSetting("AUTHMATRIX", self._db.getSaveableJson())
-
-    def loadClick(self,e):
-        returnVal = self._fc.showOpenDialog(self._splitpane)
-        if returnVal == JFileChooser.APPROVE_OPTION:
-            f = self._fc.getSelectedFile()
-            fileName = f.getPath()
-            
-            filein = open(fileName,'r')
-            jsonText = filein.read()
-            filein.close()
-            # Check if using on older state file compatible with v0.5.2 or greater
-            if not jsonText or jsonText[0] !="{":
-                warning = """
-                CAUTION: 
-    
-                Loading a saved configuration prior to v0.6.3 deserializes data into Jython objects. 
-                This action may pose a security threat to the application.
-                Only proceed when the source and contents of this file is trusted. 
-    
-                Load Selected File?
-                """
-                result = JOptionPane.showOptionDialog(self._splitpane, 
-                    warning, "Caution", 
-                    JOptionPane.YES_NO_OPTION, 
-                    JOptionPane.WARNING_MESSAGE, 
-                    None, 
-                    ["OK", "Cancel"],
-                    "OK")
-
-                if result != JOptionPane.YES_OPTION:
-                    return
-                self._db.loadLegacy(fileName,self)
-            else:
-                self._db.loadJson(jsonText,self)
-                # TODO currently can load exention settings, but this is saved for Burp and not for the Project specifically
-                # self._db.loadJson(self._callbacks.loadExtensionSetting("AUTHMATRIX"),self)
-
-            self._userTable.redrawTable()
-            self._messageTable.redrawTable()
-            self._chainTable.redrawTable()
-
-    def clearClick(self,e):
-        result = JOptionPane.showConfirmDialog(self._splitpane, "Clear AuthMatrix Configuration?", "Clear Config", JOptionPane.YES_NO_OPTION)
-        if result == JOptionPane.YES_OPTION:
-            self._db.clear()
-            self._tabs.removeAll()
-            self._userTable.redrawTable()
-            self._messageTable.redrawTable()
-            self._chainTable.redrawTable()
-
-    def runClick(self,e):
-        t = Thread(target=self.runMessagesThread)
-        self._tabs.removeAll()
-        t.start()
-
-    def changeRegexPopup(self):
-        regexComboBox = JComboBox(self._db.arrayOfRegexes)
-        regexComboBox.setEditable(True)
-        failureModeCheckbox = JCheckBox()
-
-        panel = JPanel(GridBagLayout())
-        gbc = GridBagConstraints()
-        gbc.anchor = GridBagConstraints.WEST
-        firstline = JPanel()
-        firstline.add(JLabel("Select a Regex for all selected Requests:"))
-        secondline = JPanel()
-        secondline.add(regexComboBox)
-        thirdline = JPanel()
-        thirdline.add(failureModeCheckbox)
-        thirdline.add(JLabel("Regex Detects Unauthorized Requests (Failure Mode)"))
-
-
-        gbc.gridy = 0
-        panel.add(firstline,gbc)
-        gbc.gridy = 1
-        panel.add(secondline, gbc)
-        gbc.gridy = 2
-        panel.add(thirdline, gbc)
-
-
-        result = JOptionPane.showConfirmDialog(self._splitpane, panel, "Select Response Regex", JOptionPane.OK_CANCEL_OPTION)
-        value = regexComboBox.getSelectedItem() 
-        if result == JOptionPane.CANCEL_OPTION or not value:
-            return None, None
-        return value, failureModeCheckbox.isSelected()
-
-
-
-
-    def changeDomainPopup(self, service):
-        hostField = JTextField(25)
-        portField = JTextField(25)
-        checkbox = JCheckBox()
-
-        replaceHostCheckbox = JCheckBox()
-        replaceHostCheckbox.setSelected(True)
-        
-        errorField = JLabel("\n")
-        errorField.setForeground(Color.orange);
-        errorField.setFont
-
-        def isValidDomain(domain):
-            return re.match(r'^[a-zA-Z0-9-\.]+$', domain)
-
-        if service:
-            hostField.setText(service.getHost())
-            portField.setText(str(service.getPort()))
-            if service.getProtocol()=="https":
-                checkbox.setSelected(True)
-
-        class HttpsItemListener(ItemListener):
-            def itemStateChanged(self, e):
-                if e.getStateChange() == ItemEvent.SELECTED and portField.getText() == "80":                    
-                    portField.setText("443")
-                elif e.getStateChange() == ItemEvent.DESELECTED and portField.getText() == "443":
-                    portField.setText("80")
-        checkbox.addItemListener(HttpsItemListener())
-
-        class HostDocumentListener(DocumentListener):
-            def changeUpdate(self, e):
-                self.testHost()
-            def removeUpdate(self, e):
-                self.testHost()
-            def insertUpdate(self, e):
-                self.testHost()
-
-            def testHost(self):
-                domain = hostField.getText()
-                matches = isValidDomain(domain)
-                if not matches:
-                    # NOTE Hacky way to fix layout when host is long
-                    if len(domain)>40:
-                        domain = domain[:40]+"..."
-                    errorField.setText("Invalid host: "+domain)
-                else:
-                    errorField.setText("\n")
-        hostField.getDocument().addDocumentListener(HostDocumentListener())
-
-        domainPanel = JPanel(GridBagLayout())
-        gbc = GridBagConstraints()
-        gbc.anchor = GridBagConstraints.WEST
-
-        firstline = JPanel()
-        firstline.add(JLabel("Specify the details of the server to which the request will be sent."))
-        secondline = JPanel()
-        secondline.add(JLabel("Host: "))
-        secondline.add(hostField)
-        thirdline = JPanel()
-        thirdline.add(JLabel("Port: "))
-        thirdline.add(portField)
-        fourthline = JPanel()
-        fourthline.add(checkbox)
-        fourthline.add(JLabel("Use HTTPS"))
-        fifthline = JPanel()
-        fifthline.add(replaceHostCheckbox)
-        fifthline.add(JLabel("Replace Host in HTTP header"))
-        sixthline = JPanel()
-        sixthline.add(errorField)
-
-        gbc.gridy = 0
-        domainPanel.add(firstline,gbc)
-        gbc.gridy = 1
-        domainPanel.add(secondline, gbc)
-        gbc.gridy = 2
-        domainPanel.add(thirdline, gbc)
-        gbc.gridy = 3
-        domainPanel.add(fourthline, gbc)
-        gbc.gridy = 4
-        domainPanel.add(fifthline, gbc)
-        gbc.gridy = 5
-        domainPanel.add(sixthline, gbc)
-
-
-        result = JOptionPane.showConfirmDialog(
-            self._splitpane,domainPanel, "Configure target details", JOptionPane.OK_CANCEL_OPTION)
-        cancelled = (result == JOptionPane.CANCEL_OPTION)
-        if cancelled or not isValidDomain(hostField.getText()):
-            return (False, None, None, False, False)
-        return (True, hostField.getText(), portField.getText(), checkbox.isSelected(), replaceHostCheckbox.isSelected())
-
-    ##
-    ## Methods for running messages and analyzing results
-    ##
-
-    def lockButtons(self, running=True):
-        # Disable run button, enable cancel button
-        self._runButton.setEnabled(not running)
-        self._newUserButton.setEnabled(not running)
-        self._newRoleButton.setEnabled(not running)
-        self._newHeaderButton.setEnabled(not running)
-        self._newChainButton.setEnabled(not running)
-        self._newStaticValueButton.setEnabled(not running)
-        self._saveButton.setEnabled(not running)
-        self._loadButton.setEnabled(not running)
-        self._clearButton.setEnabled(not running)
-        self._cancelButton.setEnabled(running)
-
-
-    def runMessagesThread(self, messageIndexes=None):
-        self._db.lock.acquire()
-        try:
-            self.lockButtons()
-            self._runCancelled=False
-            # Update original requests with any user changes
-            self._messageTable.updateMessages()
-            self._db.clearAllChainResults()
-
-            indexes = messageIndexes
-            if not indexes:
-                indexes = self._db.getActiveMessageIndexes()
-            self.clearColorResults(indexes)
-            # Run in order of row, not by index
-            messagesThatHaveRun = []
-            for message in self._db.getMessagesInOrderByRow():
-                # Only run if message is in the selected indexes (NOTE: dependencies will be run even if not selected)
-                if message._index in indexes:
-                    messagesThatHaveRun = self.runMessageAndDependencies(message._index, messagesThatHaveRun, [])
-
-        except:
-            traceback.print_exc(file=self._callbacks.getStderr())
-        finally:
-            self.lockButtons(False)
-            self._db.lock.release()
-            self._messageTable.redrawTable()
-
-    def runMessageAndDependencies(self, messageIndex, messagesThatHaveRun, recursionCheckArray):
-        messageEntry = self._db.arrayOfMessages[messageIndex]
-        updatedMessagesThatHaveRun = messagesThatHaveRun[:]
-        updatedRecursionCheckArray = recursionCheckArray[:]
-
-        if messageIndex in updatedRecursionCheckArray:
-            print "Error: Recursion detected in message chains: "+"->".join([str(i) for i in updatedRecursionCheckArray])+"->"+str(messageIndex)
-
-        elif (messageIndex not in updatedMessagesThatHaveRun 
-            and messageEntry.isEnabled() 
-            and messageIndex in self._db.getActiveMessageIndexes()):
-                updatedRecursionCheckArray.append(messageIndex)
-                for chainIndex in self._db.getActiveChainIndexes():
-                    # Run any dependencies first
-                    chainEntry = self._db.arrayOfChains[chainIndex]
-                    if (messageIndex in chainEntry.getToIDRange() 
-                        and chainEntry.isEnabled() 
-                        and str(chainEntry._fromID).isdigit() 
-                        and int(chainEntry._fromID) >= 0):
-                            updatedMessagesThatHaveRun = self.runMessageAndDependencies(int(chainEntry._fromID), updatedMessagesThatHaveRun, updatedRecursionCheckArray)
-                self.runMessage(messageIndex)
-                # print messageIndex
-                updatedMessagesThatHaveRun.append(messageIndex)
-
-        return updatedMessagesThatHaveRun
-
-
-    def runMessage(self, messageIndex):
-
-        # NOTE: this uses hacky threading tricks for handling timeouts
-        tempRequestResponse = []
-        index = 0
-        def loadRequestResponse(index, service, message):
-            # NOTE: tempRequestResponse is an array because of a threading issue,
-            # where if this thread times out, it will still update temprequestresponse later on..
-            try:
-                tempRequestResponse[index] = self._callbacks.makeHttpRequest(service,message)
-            except java.lang.RuntimeException:
-                # Catches if there is a bad host
-                # TODO there may sometimes be an unhandled exception thrown in the stack trace here?
-                print "Runtime Exception"
-                return
-            except:
-                traceback.print_exc(file=callbacks.getStderr())
-
-        messageEntry = self._db.arrayOfMessages[messageIndex]
-        messageEntry.clearResults()
-
-        messageInfo = messageEntry._requestResponse
-        requestInfo = self._helpers.analyzeRequest(messageInfo)
-        reqBody = messageInfo.getRequest()[requestInfo.getBodyOffset():]
-
-
-        for userIndex in [userEntry._index for userEntry in self._db.getUsersInOrderByRow()]:
-            # Handle cancel button early exit here
-            if self._runCancelled:
-                return
-
-            userEntry = self._db.arrayOfUsers[userIndex]
-            # Only run if the user is enabled
-            if userEntry.isEnabled():
-                newHeaders = ModifyMessage.getNewHeaders(requestInfo, userEntry._cookies, userEntry._headers)
-                newBody = reqBody
-    
-                # Replace with Chain
-                for toValue, chainIndex in userEntry.getChainResultByMessageIndex(messageIndex):
-                    # Add transformers
-                    chain = self._db.arrayOfChains[chainIndex]
-                    toValue = chain.transform(toValue, self._callbacks)       
-                    toRegex = chain._toRegex
-                    newBody = StringUtil.toBytes(ModifyMessage.chainReplace(toRegex,toValue,[StringUtil.fromBytes(newBody)])[0])
-                    newHeaders = ModifyMessage.chainReplace(toRegex,toValue,newHeaders)
-    
-                # Replace with SV
-                # toValue = SV, toRegex = toRegex
-                for chain in [self._db.arrayOfChains[i] for i in self._db.getActiveChainIndexes()]:
-                    svName = chain.getSVName()
-                    # If the Chain Source exists, and this message is affected, and the chain is enabled
-                    if svName and messageIndex in chain.getToIDRange() and chain.isEnabled():
-                        # get toValue for correct source
-                        sourceUser = chain._sourceUser if chain._sourceUser>=0 else userIndex
-                        # Check that sourceUser is active
-                        if sourceUser in self._db.getActiveUserIndexes():
-                            toValue = self._db.getSVByName(svName).getValueForUserIndex(sourceUser)
-                            # Add transformers
-                            toValue = chain.transform(toValue, self._callbacks)
-                            toRegex = chain._toRegex
-                            newBody = StringUtil.toBytes(ModifyMessage.chainReplace(toRegex,toValue,[StringUtil.fromBytes(newBody)])[0])
-                            newHeaders = ModifyMessage.chainReplace(toRegex,toValue,newHeaders)
-    
-                # Replace Custom Special Types (i.e. Random)
-                newBody = StringUtil.toBytes(ModifyMessage.customReplace([StringUtil.fromBytes(newBody)])[0])
-                newHeaders = ModifyMessage.customReplace(newHeaders)
-    
-                # Construct and send a message with the new headers
-                message = self._helpers.buildHttpMessage(newHeaders, newBody)
-    
-    
-                # Run with threading to timeout correctly   
-                tempRequestResponse.append(None)         
-                t = Thread(target=loadRequestResponse, args = [index,messageInfo.getHttpService(),message])
-                t.start()
-                t.join(self._db.LOAD_TIMEOUT)
-    
-                # Create default requestResponse without response
-                requestResponse = RequestResponseStored(self, 
-                    request=message, 
-                    httpService=messageInfo.getHttpService())
-    
-                if t.isAlive():
-                    print "ERROR: Request Timeout for Request #"+str(messageIndex)+" and User #"+str(userIndex)
-                elif tempRequestResponse[index]:
-                    requestResponse = RequestResponseStored(self,requestResponse=tempRequestResponse[index])
-                
-                messageEntry.addRunByUserIndex(userIndex, requestResponse)
-    
-                # Get Chain Result
-                response = requestResponse.getResponse()
-                if not response:
-                    print "ERROR: No HTTP Response for Request #"+str(messageIndex)+" and User #"+str(userIndex)
-                else:
-                    response = StringUtil.fromBytes(response)
-                    for chain in [self._db.arrayOfChains[c] for c in self._db.getActiveChainIndexes()]:
-                        # This wont have issues with SV because of the prefix never matching the index
-                        if str(chain._fromID) == str(messageIndex) and chain.isEnabled():
-                            # If a sourceUser is set, replace for all users' chain results
-                            # Else, replace each user's chain results individually
-                            replace = True
-                            affectedUsers = [userEntry]
-                            if str(chain._sourceUser).isdigit() and chain._sourceUser >= 0: # TODO (0.9): why .isdigit()? Can this line just be removed
-                                if str(chain._sourceUser) == str(userIndex):
-                                    affectedUsers = self._db.getUsersInOrderByRow()
-                                else:
-                                    replace = False
-    
-                            if replace:
-                                result = ""
-                                if chain._fromRegex:
-                                    match = re.search(chain._fromRegex, response, re.DOTALL)
-                                    if match and len(match.groups()):
-                                        result = match.group(1)
-                                    
-                                for toID in chain.getToIDRange():
-                                    for affectedUser in affectedUsers:
-                                        affectedUser.addChainResultByMessageIndex(toID, result, chain._index)
-                index +=1
-
-        # Grab all active roleIndexes that are checkboxed
-        activeCheckBoxedRoles = [index for index in messageEntry._roles.keys() if messageEntry._roles[index] and not self._db.arrayOfRoles[index].isDeleted()]
-        # Check Role Results of message
-        for roleIndex in self._db.getActiveRoleIndexes():
-            expectedResult = self.checkResult(messageEntry, roleIndex, activeCheckBoxedRoles)
-            messageEntry.setRoleResultByRoleIndex(roleIndex, expectedResult)
-                    
-
-    def clearColorResults(self, messageIndexArray = None):
-        if not messageIndexArray:
-            messageIndexes = self._db.getActiveMessageIndexes()
-        else:
-            messageIndexes = messageIndexArray
-        for messageIndex in messageIndexes:
-            messageEntry = self._db.arrayOfMessages[messageIndex]
-            messageEntry.clearResults()
-        self._messageTable.redrawTable()
-
-    def checkResult(self, messageEntry, roleIndex, activeCheckBoxedRoles):
-        for userEntry in self._db.getUsersInOrderByRow():
-
-            ignoreUser = False
-
-            # NOTE: When using failure regex, all users not in a checked role must see that regex
-
-            # if user is not in this role, ignore it
-            if not userEntry._roles[roleIndex]:
-                ignoreUser = True
-            elif not userEntry.isEnabled():
-                ignoreUser = True
-            else:
-                # If user is in any other checked role, then ignore it
-                for index in self._db.getActiveRoleIndexes():
-                    if not index == roleIndex and userEntry._roles[index]:
-                        if index in activeCheckBoxedRoles:
-                            ignoreUser = True
-                    
-            if not ignoreUser:
-                if not userEntry._index in messageEntry._userRuns:
-                    print ("Unexpected Error: Results not found for Request #"
-                        + str(messageEntry._index) + " and User #" + str(userEntry._index))
-                    return False
-                requestResponse = messageEntry._userRuns[userEntry._index]
-                response = requestResponse.getResponse()
-                if not response:
-                    # No Response: default to failed
-                    return False
-                
-                resp = StringUtil.fromBytes(response)
-                found = re.search(messageEntry._regex, resp, re.DOTALL)
-
-                roleChecked = roleIndex in activeCheckBoxedRoles
-                shouldSucceed = not roleChecked if messageEntry.isFailureRegex() else roleChecked 
-                succeeds = found if shouldSucceed else not found
-                
-                
-                if not succeeds:
-                    return False
-
-        return True
 
 
 ##
@@ -1255,7 +1330,6 @@ class ModifyMessage():
             ret.add(toNew)
 
         return ret
-
 
 
 
@@ -1474,7 +1548,7 @@ class MatrixDB():
             if type(user._roles) == int:
                 # Chain
                 self.deletedChainCount = user._roles
-                
+
                 name=""
                 sourceUser=""
                 if user._name:
@@ -1520,7 +1594,7 @@ class MatrixDB():
         self.lock.release()
 
     def loadJson(self, jsonText, extender):
-        # NOTE: Weird issue where saving serialized json for configs loaded from old states (pre v0.6.3)
+        # NOTE: Weird issue where saving serialized json for configs loaded from old states (pre v0.6.3) 
         # doesn't use correct capitalization on bools.
         # This replacement might have weird results, but most are mitigated by using base64 encoding
         jsonFixed = jsonText.replace(": False",": false").replace(": True",": true")
@@ -1568,7 +1642,7 @@ class MatrixDB():
                         roleEntry["column"],
                         roleEntry["name"],
                         deleted = deleted,
-                        singleUser = False if version < "0.7" or "singleUser" not in roleEntry else roleEntry["singleUser"]
+                        singleUser = False if version < "0.7" or "singleUser" not in roleEntry else roleEntry["singleUser"] 
                         ))
     
             if "arrayOfUsers" in stateDict:
@@ -1699,7 +1773,6 @@ class MatrixDB():
             self.loadJson(backupState,extender)
 
 
-
     def sanityCheck(self, extender):
         try:
             # Returns an error string if the DB is in a corrupt state, else returns None
@@ -1709,7 +1782,7 @@ class MatrixDB():
             chainIndexes = self.getActiveChainIndexes()
     
             # Index Checks
-            for indexes, currentArray, deletedCount in [
+            for indexes, currentArray, deletedCount in [ 
                 (userIndexes, self.arrayOfUsers, self.deletedUserCount),
                 (roleIndexes, self.arrayOfRoles, self.deletedRoleCount),
                 (messageIndexes, self.arrayOfMessages, self.deletedMessageCount),
@@ -1821,7 +1894,7 @@ class MatrixDB():
                     "port":messageEntry._requestResponse.getHttpService().getPort() if not deleted else None,
                     "protocol":messageEntry._requestResponse.getHttpService().getProtocol() if not deleted else None,
                     "name":messageEntry._name if not deleted else None, 
-                    "roles":messageEntry._roles if not deleted else {}, 
+                    "roles":messageEntry._roles if not deleted else {},
                     "regexBase64":base64.b64encode(messageEntry._regex.encode("utf-8")) if messageEntry._regex and not deleted else "", 
                     "deleted":deleted,
                     "enabled":messageEntry._enabled,
@@ -2080,8 +2153,8 @@ class MatrixDB():
 
 ##
 ## Tables and Table Models  
-##
-    
+##    
+
 class UserTableModel(AbstractTableModel):
 
     def __init__(self, extender):
@@ -2382,14 +2455,13 @@ class MessageTable(JTable):
         for messageIndex in self._viewerMap:
             requestViewer = self._viewerMap[messageIndex]
             if requestViewer and requestViewer.isMessageModified():
-                messageEntry = self.getModel()._db.arrayOfMessages[messageIndex]
+                messageEntry = self.getModel()._db.getMessageByRow(messageIndex)
                 newMessage = requestViewer.getMessage()
                 # TODO save the response too? Downside is that the original may not match the response anymore
                 messageEntry._requestResponse = RequestResponseStored(self._extender, 
                     request=newMessage, 
-                    httpService=messageEntry._requestResponse.getHttpService())                
+                    httpService=messageEntry._requestResponse.getHttpService())
         self._viewerMap = {}
-
 
 
 
@@ -2545,9 +2617,8 @@ class ChainTable(JTable):
         # NOTE: this is prob ineffecient but it should catchall for changes to the table
         self.getModel().fireTableStructureChanged()
         self.getModel().fireTableDataChanged()
+
         
-
-
 
         if self.getModel().getColumnCount() > 1:
 
@@ -2637,7 +2708,7 @@ class ChainTable(JTable):
 
 # For color-coding checkboxes in the message table
 # Also Grey when not enabled
-class SuccessBooleanRenderer(JCheckBox,TableCellRenderer):
+class SuccessBooleanRenderer(JCheckBox, TableCellRenderer):
 
     def __init__(self, defaultCellRender, db):
         self.setOpaque(True)
@@ -2952,7 +3023,7 @@ class ChainEntry:
         self._toStart = ""
         self._toEnd = ""
         self._enabled = enabled
-        self._transformers = transformers[:] 
+        self._transformers = transformers[:]
 
         return
 
@@ -3003,20 +3074,6 @@ class ChainEntry:
     def getRexegFromStartAndEnd(self,start,end):
         # TODO add this to the UI, perhaps with a right click option to change the table rows?
         return re.escape(start)+"(.*?)"+re.escape(end)
-
-    def getToIDRange(self):
-        result = []
-        for part in self._toID.split(','):
-            if '-' in part:
-                a,b = part.split('-')
-                if a.isdigit() and b.isdigit():
-                    a,b = int(a),int(b)
-                    result.extend(range(a,b+1))
-            else:
-                if part.isdigit():
-                    a = int(part)
-                    result.append(a)
-        return result
 
     def getSVName(self):
         # TODO access svPrefix from above
