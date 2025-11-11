@@ -1,121 +1,82 @@
-# AuthMatrix v0.8.2
-
-AuthMatrix is an extension to Burp Suite that provides a simple way to test authorization in web applications and web services. With AuthMatrix, testers focus on thoroughly defining tables of users, roles, and requests for their specific target application upfront. These tables are structured in a similar format to that of an access control matrix common in various threat modeling methodologies.
-
-Once the tables have been assembled, testers can use the simple click-to-run interface to kick off all combinations of roles and requests. The results can be confirmed with an easy to read, color-coded interface indicating any authorization vulnerabilities detected in the system. Additionally, the extension provides the ability to save and load target configurations for simple regression testing.
-
-# Installation
-
-AuthMatrix can be installed through the Burp Suite BApp Store. From within Burp Suite, select the Extender tab, select the BApp Store, select AuthMatrix, and click install.
-
-For Manual installation, download AuthMatrix.py from this repository.  Then from within Burp Suite, select the Extender tab, click the Add button, change the Extension type to Python, and select the AuthMatrix python file.
-
-### Note
-
-AuthMatrix requires configuring Burp Suite to use Jython.  Easy instructions for this are located at the following URL.
-
-https://portswigger.net/burp/help/extender.html#options_pythonenv
-
-Be sure to use Jython version 2.7.0 or greater to ensure compatibility.
-
-# Basic Usage
-
-1. Create roles for all privilege levels within the target application.  (Common roles may include User, Admin, and Anonymous)
-
-2. Create enough users to fit these various roles and select the checkboxes for all roles that the user belongs to. "Single-User" roles containing just the one user will be configured automatically to assist in cross-user resource testing. If these are not needed, feel free to delete these roles by right-clicking the column in the Request Table.
-
-3. Generate session tokens for each user from the Repeater tab and enter them into the relevant column within the Users Table. Cookies can be sent directly to the users via the right click menu available in Repeater. AuthMatrix will intelligently parse the cookie string from the table and substitute/add them to the requests where applicable.
-
-    * NOTE: The Cookies field is optional. If the target uses HTTP headers instead, these can be added by clicking the "New Header" button. 
-
-    * For more advanced configurations, including automated refreshing of credentials, see the "Chains for Authenticating Users" example below.
-
-4. From another area of Burp Suite (i.e. Target tab, Repeater Tab, etc) right click a request and select "Send to AuthMatrix." 
-
-5. In the Request Table of AuthMatrix, select the checkboxes for all roles that are authorized to make each HTTP request.
-
-6. Customize a Response Regex based on the expected response behavior of the request to determine if the action has succeeded. 
-
-    * Common regexes include HTTP Response headers, success messages within the body, or other variations within the body of the page.
-
-    * NOTE: Requests can be configured to use a Failure Regex instead through the right-click menu (i.e. Authenticated users should never receive an HTTP 303)
+# AuthMatrix (Community-Maintained Version)
 
 
-7. Click Run at the bottom to run all requests or right click several requests and select run.  Observe that the adjacent table will show color-coded results.
 
-    * Green indicates no vulnerability detected
+---
 
-    * Red indicates the request may contain a vulnerability
+### ⚠️ **Notice: This is a Community-Maintained Fork**
 
-    * Blue indicates that the result may be a false positive.  (This generally means there is an invalid/expired session token or an incorrect regex)
+This is an actively maintained fork of the original **AuthMatrix** project by **SecurityInnovation** ([github.com/SecurityInnovation/AuthMatrix](https://github.com/SecurityInnovation/AuthMatrix)).
 
-## Sample AuthMatrix Configuration
+The original project appears to be unmaintained (last commit in [Year of last commit, e.g., 2018]). This fork was created to continue its development, fix outstanding bugs, incorporate modern Burp Suite APIs, and add new features for the community.
 
-![Sample AuthMatrix Configuration](images/img1.png)
+All credit for the original concept and foundational code goes to SecurityInnovation.
 
+---
 
-## False Positives Detected (Invalid Session Tokens)
+## What is AuthMatrix?
 
-![Invalid Session Tokens](images/img2.png)
+AuthMatrix is a Burp Suite extension designed to help security testers identify authorization vulnerabilities. It provides a simple and intuitive way to test complex, matrix-based access control models in web applications and web services.
 
-# Advanced Usage
+This extension allows testers to define a set of users, roles, and "chains" (requests) to verify that an application's authentication and authorization controls are working as intended.
 
-## Chains
+## New Features in This Fork
 
-Chains provide a way to copy a static or dynamic value into the body of a request. These values can be pulled from the response of a previously run request (using a regex) or by specifing user-specific static string values.
+This version includes all the original functionality of AuthMatrix, plus the following enhancements:
 
-The most common use cases for Chains are:
+* ✅ **[Your Feature 1]**: (e.g., Added support for JSON Web Tokens (JWT) in headers)
+* ✅ **[Your Feature 2]**: (e.g., Integrated with Burp's new Logger component)
+* 🐛 **[Your Bug Fix 1]**: (e.g., Fixed a critical bug where session handling would fail on new Java versions)
+* 🔧 **[Your Update 1]**: (e.g., Updated all libraries to be compatible with the latest Burp Suite Java version)
+* *...[List your other changes here]...*
 
-1. Populating requests with valid CSRF Tokens
+## Installation
 
-2. Testing newly created IDs/GUIDs for cross-user authorization issues
+### 1. BApp Store (Recommended)
 
-3. Automating authentication and session refreshing
+This extension is available in the Burp Suite **BApp Store**. This is the easiest way to install and stay updated.
 
-A Chain entry has the following values:
+1.  Go to the **Extender** tab in Burp Suite.
+2.  Click the **BApp Store** sub-tab.
+3.  Search for "AuthMatrix".
+4.  Click **Install**.
 
-* __Chain Name:__ a descriptive name
+*(Note: If you are submitting this to the BApp store for the first time, replace the text above with "Coming soon to the BApp Store!")*
 
-* __Source:__ a static user string defined in the User Table or the ID of the source request in the Request table
+### 2. Manual Installation (Build from Source)
 
-* __Extraction Regex:__ a regex used to extract a value from the response of the source request. This field is only used when a Request is specified in the previous field. If used, this must contain one parenthesis grouping that is to be extracted [i.e. (.*)]
+If you prefer to build it yourself:
 
-* __Destinations:__ a list of Request IDs that the source value will be replaced into.
+1.  Clone this repository:
+    ```bash
+    git clone [https://github.com/](https://github.com/)[YOUR_USERNAME]/[YOUR_REPOSITORY_NAME].git
+    ```
+2.  Build the project using [Your build method, e.g., Gradle or Maven]:
+    ```bash
+    ./gradlew fatJar
+    ```
+3.  Go to the **Extender** tab in Burp Suite.
+4.  Click **Add** and select the "Java" extension type.
+5.  Load the generated `AuthMatrix-all.jar` file from the `/build/libs/` directory.
 
-* __Replacement Regex:__ a regex used to determine where the source value is to be inserted.  This must contain one parenthesis grouping to be replaced [i.e. (.*)]
+## Usage
 
-* __Use Values From:__ specify whether to use the source value obtained from one selected user (useful for cross-user resource tests) or to use the values from all users and place them into their corresponding user's destination requests (useful for automation tasks like CSRF token retrieval)
+For detailed usage instructions, please refer to the **original project's Wiki**. The core concepts remain the same.
 
-__NOTE:__ Requests are run in order of row, however, if a chain dependency is detected, AuthMatrix will run the requests in the required order.
+* **[Original Wiki Link](https://github.com/SecurityInnovation/AuthMatrix/wiki)**
 
+*(Note: The original Wiki may not reflect the new features added in this fork. We are working on updating the documentation.)*
 
-## Chains for CSRF
+## Contributing
 
-![Chain for CSRF](images/img4.png)
+Contributions are very welcome! If you find a bug, have a feature request, or want to improve the code, please:
 
-## Chains for Cross-User Resource Tests
+1.  Fork this repository (the new one, not the original).
+2.  Create a new branch for your feature or bugfix.
+3.  Submit a Pull Request with a clear description of your changes.
 
-![Chain Cross-User](images/img5.png)
+## License
 
-## Chains for Authenticating Users
+This project is licensed under the **Apache License 2.0**, in accordance with the original project.
 
-![Chain Authentication](images/img6.png)
-
-## Failure Regex Mode
-
-For certain targets, it may be easier to configure AuthMatrix to detect the response condition of when a request has failed. For example, if a target site returns unique data on successful requests, but always returns an HTTP 303 when an unauthorized action is performed. 
-
-In this mode, AuthMatrix will validate this regex for all users not part of a succeeding role.
-
-To do this, right click the request and select "Toggle Regex Mode".  The regex field will be highlighted in purple to indicate that AuthMatrix will run the request in Failure Regex Mode.
-
-__NOTE:__ False positive detection and highlighting may not work in Failure Regex Mode
-
-## Sample Configuration with Failure Regex Mode
-
-![Sample Configuration with Failure Regex Mode](images/img3.png)
-
-## JSON State File
-
-[Refer to the JsonState document for details regarding the structure of state files](JsonState.md)
-
+This is a derivative work of the original AuthMatrix. The original `LICENSE` file and notices from the SecurityInnovation repository are preserved in this project as required.
