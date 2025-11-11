@@ -32,7 +32,7 @@ This version includes all the original functionality of AuthMatrix, plus the fol
 
 ## Installation
 
-### 1. BApp Store (Recommended)
+### 1. BApp Store (Recommended) Coming soon
 
 This extension is available in the Burp Suite **BApp Store**. This is the easiest way to install and stay updated.
 
@@ -41,7 +41,6 @@ This extension is available in the Burp Suite **BApp Store**. This is the easies
 3.  Search for "AuthMatrix".
 4.  Click **Install**.
 
-*(Note: If you are submitting this to the BApp store for the first time, replace the text above with "Coming soon to the BApp Store!")*
 
 ### 2. Manual Installation (Build from Source)
 
@@ -49,7 +48,7 @@ If you prefer to build it yourself:
 
 1.  Clone this repository:
     ```bash
-    git clone [https://github.com/](https://github.com/)[YOUR_USERNAME]/[YOUR_REPOSITORY_NAME].git
+    git clone [https://github.com/](https://github.com/) earth11411/AuthMatrix.git
     ```
 2.  Build the project using [Your build method, e.g., Gradle or Maven]:
     ```bash
