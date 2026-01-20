@@ -858,7 +858,7 @@ class BurpExtender(IBurpExtender, ITab, IMessageEditorController, IContextMenuFa
                         else:
                             return
                     else:
-                        selfelfExtender._selectedRow = component.rowAtPoint(e.getPoint())
+                        selfExtender._selectedRow = component.rowAtPoint(e.getPoint())
                     popup.show(e.getComponent(), e.getX(), e.getY())
             component.addMouseListener(genericMouseListener())
 
