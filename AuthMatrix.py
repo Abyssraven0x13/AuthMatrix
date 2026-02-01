@@ -858,7 +858,7 @@ class BurpExtender(IBurpExtender, ITab, IMessageEditorController, IContextMenuFa
                         else:
                             return
                     else:
-                        selfelfExtender._selectedRow = component.rowAtPoint(e.getPoint())
+                        selfExtender._selectedRow = component.rowAtPoint(e.getPoint())
                     popup.show(e.getComponent(), e.getX(), e.getY())
             component.addMouseListener(genericMouseListener())
 
@@ -2718,10 +2718,11 @@ class SuccessBooleanRenderer(JCheckBox, TableCellRenderer):
 
     def getTableCellRendererComponent(self, table, value, isSelected, hasFocus, row, column):
         cell = self._defaultCellRender.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
-        if value:
-            cell.setSelected(True)
-        else:
-            cell.setSelected(False)
+        if hasattr(cell, "setSelected"):
+            if value:
+                cell.setSelected(True)
+            else:
+                cell.setSelected(False)
         if isSelected:
             cell.setForeground(table.getSelectionForeground())
             cell.setBackground(table.getSelectionBackground())
