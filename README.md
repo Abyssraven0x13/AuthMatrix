@@ -4,11 +4,7 @@
 
 ### ⚠️ **Notice: This is a Community-Maintained Fork**
 
-This is an actively maintained fork of the original **AuthMatrix** project by **SecurityInnovation** ([github.com/SecurityInnovation/AuthMatrix](https://github.com/SecurityInnovation/AuthMatrix)).
-
-The original project appears to be unmaintained (last commit in **2018**). This fork was created to continue its development, fix outstanding bugs, incorporate modern Burp Suite APIs, and add new features for the community.
-
-All credit for the original concept and foundational code goes to SecurityInnovation.
+This is an actively maintained fork of the original AuthMatrix project by SecurityInnovation. The original project appears to be unmaintained (last commit in 2018). This version is dedicated to fixing outstanding bugs, incorporating modern Burp Suite logic, and adding essential features for modern web security testing.
 
 ---
 
@@ -18,18 +14,48 @@ AuthMatrix is a Burp Suite extension designed to help security testers identify 
 
 This extension allows testers to define a set of users, roles, and "chains" (requests) to verify that an application's authentication and authorization controls are working as intended.
 
-## New Features in This Fork
-
-This version includes all the original functionality of AuthMatrix, plus the following enhancements:
-
-* ✅ **Added "Clear Auth & Re-import" Button**: A new UI button to easily clear all Cookie and Authorization headers from requests.
-* 🐛 **Fixed Double Request Bug**: Corrected an issue where requests were being sent twice; now only a single request is sent.
 
 ### Feature Preview
 
-Here is a look at the new "Clear Auth & Re-import" button:
+Here is a look at the new buttons:
 
-<img width="1100" height="511" alt="Screenshot 2568-11-11 at 17 15 45" src="https://github.com/user-attachments/assets/cb55ee01-b1e1-433f-9592-0d4ef364064f" />
+<img width="968" height="491" alt="Screenshot 2569-02-02 at 02 34 12" src="https://github.com/user-attachments/assets/6bdbe060-c31c-4dc9-9ec0-720e7f51ff6b" />
+
+## 🚀 Enhanced Features in This Fork
+
+This version includes all the original functionality of AuthMatrix, plus the following enhancements:
+
+**1. ✅ Bug Fix: Single Request Logic:**
+
+**Original Issue:** Sending a request to AuthMatrix often triggered two redundant requests.
+
+**Fix:** Corrected the logic to ensure only a single request is sent, reducing noise and preventing potential side effects on the target server.
+
+**2. ✅ GUI Performance & Stability Fixes (Special Thanks to @Abyssraven0x13):**
+
+**Fixed GUI Freeze & NullPointerException:** Corrected the getTableCellRendererComponent logic to verify the existence of the setSelected method before execution, preventing crashes in certain Burp Suite environments.
+
+**Fixed Typos & Logic Errors:** Resolved a naming error where selfelfExtender was used instead of selfExtender, ensuring proper row selection and menu functionality.
+
+
+**3. 🧹 Clear Auth & Re-import**: 
+Easily clear all Cookie and Authorization headers from your requests with a single click.
+
+**How to use:** Click the "Clear Auth & Re-import" button to reset session tokens before starting a new test matrix.
+
+**4. ✂️ Remove Body Parameters**
+Designed for cases where sensitive tokens or parameters are passed in the HTTP Body (supports x-www-form-urlencoded and JSON).
+
+**How to use:** 1. Click "Remove Body Param". 2. Enter the name of the parameter you want to clear. 3. The extension will automatically set that parameter's value to empty for all requests.
+
+**4. 🔄 Dynamic New Data (Body Injection)**
+Perfect for testing Broken Access Control when servers require specific user tokens or IDs within the HTTP Body.
+
+**How to use:**
+1. Click "New Data" and enter the target parameter name.
+2. A dialog will appear for each user; enter the specific value intended for that user.
+3. During the scan, each user will send the request with their uniquely assigned parameter value in the body.
+
 
 ## Installation
 
@@ -48,13 +74,6 @@ We are working on submitting this updated version to the PortSwigger BApp Store.
 5.  Select **"Python"** as the Extension type.
 6.  Load the generated `AuthMatrix.py` file from the git directory.
 
-## Usage
-
-For detailed usage instructions, please refer to the **original project's Wiki**. The core concepts remain the same.
-
-* **[Original Wiki Link](https://github.com/SecurityInnovation/AuthMatrix/wiki)**
-
-*(Note: The original Wiki may not reflect the new features added in this fork.)*
 
 ## Contributing
 
